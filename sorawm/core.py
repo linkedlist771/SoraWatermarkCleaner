@@ -1,5 +1,6 @@
 from pathlib import Path
 from typing import Callable
+from collections import deque
 
 import ffmpeg
 import numpy as np
@@ -12,9 +13,65 @@ from sorawm.watermark_detector import SoraWaterMarkDetector
 
 
 class SoraWM:
-    def __init__(self):
+    def __init__(self, temporal_smooth_window: int = 3, keyframe_interval: int = 5):
+        """
+        Args:
+            temporal_smooth_window: 时序平滑窗口大小，用于平滑inpainting结果（奇数）
+            keyframe_interval: 关键帧间隔，每N帧重新inpainting一次
+        """
         self.detector = SoraWaterMarkDetector()
         self.cleaner = WaterMarkCleaner()
+        self.temporal_smooth_window = temporal_smooth_window
+        self.keyframe_interval = keyframe_interval
+
+    def detect_scene_change(self, frame1: np.ndarray, frame2: np.ndarray, threshold: float = 30.0) -> bool:
+        """检测两帧之间是否发生场景切换"""
+        diff = np.mean(np.abs(frame1.astype(float) - frame2.astype(float)))
+        return diff > threshold
+
+    def temporal_smooth_inpainted_region(
+        self, 
+        current_frame: np.ndarray, 
+        bbox: tuple, 
+        inpainted_frames_buffer: deque
+    ) -> np.ndarray:
+        """
+        对inpainting区域进行时序平滑
+        
+        Args:
+            current_frame: 当前帧
+            bbox: 水印区域的bbox (x1, y1, x2, y2)
+            inpainted_frames_buffer: 存储最近几帧inpainting结果的缓冲区
+        
+        Returns:
+            平滑后的帧
+        """
+        if len(inpainted_frames_buffer) == 0:
+            return current_frame
+        
+        x1, y1, x2, y2 = bbox
+        result_frame = current_frame.copy()
+        
+        # 对水印区域进行时序平滑（加权平均）
+        region_sum = np.zeros((y2 - y1, x2 - x1, 3), dtype=float)
+        weights_sum = 0
+        
+        for i, frame in enumerate(inpainted_frames_buffer):
+            # 使用高斯权重，越近的帧权重越大
+            weight = np.exp(-0.5 * ((i - len(inpainted_frames_buffer) // 2) ** 2))
+            region_sum += frame[y1:y2, x1:x2].astype(float) * weight
+            weights_sum += weight
+        
+        # 加入当前帧
+        weight_current = 1.0
+        region_sum += current_frame[y1:y2, x1:x2].astype(float) * weight_current
+        weights_sum += weight_current
+        
+        # 计算加权平均
+        smoothed_region = (region_sum / weights_sum).astype(np.uint8)
+        result_frame[y1:y2, x1:x2] = smoothed_region
+        
+        return result_frame
 
     def run(
         self,
@@ -90,18 +147,66 @@ class SoraWM:
             elif after_box:
                 frame_and_mask[missed_idx]["bbox"] = after_box
 
+        # 使用关键帧策略和时序平滑
+        inpainted_frames_buffer = deque(maxlen=self.temporal_smooth_window)
+        last_keyframe_inpainted_region = None
+        last_keyframe_bbox = None
+        prev_frame = None
+        scene_change_detected = False
+        
         for idx in tqdm(range(total_frames), desc="Remove watermarks"):
             frame_info = frame_and_mask[idx]
             frame = frame_info["frame"]
             bbox = frame_info["bbox"]
+            
+            # 检测场景变化
+            if prev_frame is not None and idx > 0:
+                scene_change_detected = self.detect_scene_change(prev_frame, frame)
+                if scene_change_detected:
+                    logger.debug(f"Scene change detected at frame {idx}")
+                    inpainted_frames_buffer.clear()
+                    last_keyframe_inpainted_region = None
+            
             if bbox is not None:
                 x1, y1, x2, y2 = bbox
                 mask = np.zeros((height, width), dtype=np.uint8)
                 mask[y1:y2, x1:x2] = 255
-                cleaned_frame = self.cleaner.clean(frame, mask)
+                
+                # 判断是否需要重新inpainting（关键帧或场景切换）
+                is_keyframe = (idx % self.keyframe_interval == 0) or scene_change_detected or (last_keyframe_inpainted_region is None)
+                
+                if is_keyframe:
+                    # 关键帧：执行完整的inpainting
+                    cleaned_frame = self.cleaner.clean(frame, mask)
+                    last_keyframe_inpainted_region = cleaned_frame[y1:y2, x1:x2].copy()
+                    last_keyframe_bbox = bbox
+                    logger.debug(f"Keyframe inpainting at frame {idx}")
+                else:
+                    # 非关键帧：复用上一个关键帧的inpainting结果
+                    cleaned_frame = frame.copy()
+                    if last_keyframe_inpainted_region is not None and bbox == last_keyframe_bbox:
+                        # bbox位置相同，直接复用
+                        cleaned_frame[y1:y2, x1:x2] = last_keyframe_inpainted_region
+                    else:
+                        # bbox位置变化了，需要重新inpainting
+                        cleaned_frame = self.cleaner.clean(frame, mask)
+                        last_keyframe_inpainted_region = cleaned_frame[y1:y2, x1:x2].copy()
+                        last_keyframe_bbox = bbox
+                
+                # 应用时序平滑
+                if len(inpainted_frames_buffer) > 0:
+                    cleaned_frame = self.temporal_smooth_inpainted_region(
+                        cleaned_frame, bbox, inpainted_frames_buffer
+                    )
+                
+                # 将当前帧加入缓冲区
+                inpainted_frames_buffer.append(cleaned_frame.copy())
             else:
                 cleaned_frame = frame
+            
             process_out.stdin.write(cleaned_frame.tobytes())
+            prev_frame = frame.copy()
+            scene_change_detected = False
 
             # 50% - 95%
             if progress_callback and idx % 10 == 0:
