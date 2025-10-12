@@ -25,6 +25,9 @@ class VideoLoader:
             duration = float(video_info.get("duration", probe["format"]["duration"]))
             self.total_frames = int(duration * self.fps)
 
+        original_bitrate = video_info.get("bit_rate", None)
+        self.original_bitrate = original_bitrate
+
     def __len__(self):
         return self.total_frames
 

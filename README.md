@@ -13,7 +13,7 @@ https://github.com/user-attachments/assets/8cdc075e-7d15-4d04-8fa2-53dd287e5f4c
 
 https://github.com/user-attachments/assets/3c850ff1-b8e3-41af-a46f-2c734406e77d
 
-
+⭐️: **Yolo weights has been updated, try the new version watermark detect model, it should work better.**
 
 
 ## 1. Method
@@ -31,7 +31,8 @@ Our SoraWm is purely deeplearning driven and yields good results in many generat
 
 
 ## 2. Installation
-[FFmpeg](https://ffmpeg.org/) is needed for video processing, please install it first. We highly recommend using the `uv` to install the environments:
+
+[FFmpeg](https://ffmpeg.org/) is needed for video processing, please install it first.  We highly recommend using the `uv` to install the environments:
 
 1. installation:
 
@@ -77,31 +78,41 @@ streamlit run app.py
 
 <img src="resources/app.png" style="zoom: 25%;" />
 
-## 4. WebServer
+## **4. WebServer**
 
-Here, we provide a fastapi based webserver which enable you to quickly adapt this watermark cleaner into a service. 
+Here, we provide a **FastAPI-based web server** that can quickly turn this watermark remover into a service.
 
-Just run:
+Simply run:
 
-```python
-python start_server.py 
+```
+python start_server.py
 ```
 
-And a web server will be started at port `5344` ,  you can check the fastapi [docs](http://localhost:5344/docs) for details, there are three routers.
+The web server will start on port **5344**.
 
-1. submit_remove_task:
+You can view the FastAPI [documentation](http://localhost:5344/docs) for more details.
 
-   > Once you uploaded a video, it will return a task id,  and this video will be processed instantly.
+There are three routes available:
 
-   <img src="resources/53abf3fd-11a9-4dd7-a348-34920775f8ad.png" alt="image" style="zoom: 25%;" />
+1. **submit_remove_task**
 
-2. get_results:
+   > After uploading a video, a task ID will be returned, and the video will begin processing immediately.
 
-You can retrieve the task's tatus using taskid above,  which will show the percentage of the video processing. Once it is down, there will be a download url in the returned data.
+<img src="resources/53abf3fd-11a9-4dd7-a348-34920775f8ad.png" alt="image" style="zoom: 25%;" />
 
-3. downlaod:
+2. **get_results**
 
-You can use the download url from step 2 to get the cleaned video.
+You can use the task ID obtained above to check the task status.
+
+It will display the percentage of video processing completed.
+
+Once finished, the returned data will include a **download URL**.
+
+3. **download**
+
+You can use the **download URL** from step 2 to retrieve the cleaned video.
+
+
 
 ## 5. API
 

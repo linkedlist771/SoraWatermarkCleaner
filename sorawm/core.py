@@ -28,9 +28,21 @@ class SoraWM:
         height = input_video_loader.height
         fps = input_video_loader.fps
         total_frames = input_video_loader.total_frames
-        # Create temporary output path for video without audio
-        temp_output_path = output_video_path.parent / f"temp_{output_video_path.name}"
+        
 
+        
+        temp_output_path = output_video_path.parent / f"temp_{output_video_path.name}"
+        output_options = {
+            "pix_fmt": "yuv420p",
+            "vcodec": "libx264",
+            "preset": "slow",  
+        }
+        
+        if input_video_loader.original_bitrate:
+            output_options["video_bitrate"] = str(int(int(input_video_loader.original_bitrate) * 1.2))
+        else:
+            output_options["crf"] = "18"
+        
         process_out = (
             ffmpeg.input(
                 "pipe:",
@@ -39,7 +51,7 @@ class SoraWM:
                 s=f"{width}x{height}",
                 r=fps,
             )
-            .output(str(temp_output_path), pix_fmt="yuv420p", vcodec="libx264")
+            .output(str(temp_output_path), **output_options)
             .overwrite_output()
             .global_args("-loglevel", "error")
             .run_async(pipe_stdin=True)
