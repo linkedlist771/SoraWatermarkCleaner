@@ -13,7 +13,7 @@ detector = SoraWaterMarkDetector()
 
 
 if __name__ == "__main__":
-    fps_save_interval = 1  # Save every 1th frame
+    fps_save_interval = 1  # Save every 5th frame
 
     video_idx = 0
     image_idx = 0  # 全局图片索引
@@ -22,7 +22,7 @@ if __name__ == "__main__":
     for video_path in tqdm(list(videos_dir.rglob("*.mp4"))):
         # Open the video file
         cap = cv2.VideoCapture(str(video_path))
-
+        video_name = video_path.name
         if not cap.isOpened():
             print(f"Error opening video: {video_path}")
             continue
@@ -41,9 +41,8 @@ if __name__ == "__main__":
                 if frame_count % fps_save_interval == 0:
                     if not detector.detect(frame)["detected"]:
                         # Create filename: image_idx_framecount.jpg
-                        image_filename = f"failed_image_{image_idx:06d}_frame_{frame_count:06d}.jpg"
+                        image_filename = f"{video_name}_failed_image_frame_{frame_count:06d}.jpg"
                         image_path = images_dir / image_filename
-
                         # Save the frame
                         cv2.imwrite(str(image_path), frame)
                         image_idx += 1
