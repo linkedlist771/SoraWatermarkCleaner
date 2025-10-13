@@ -10,6 +10,7 @@ from sorawm.iopaint.const import DEFAULT_MODEL_DIR
 from sorawm.iopaint.download import cli_download_model, scan_models
 from sorawm.iopaint.model_manager import ModelManager
 from sorawm.iopaint.schema import InpaintRequest
+from sorawm.utils.devices_utils import get_device
 
 # This codebase is from https://github.com/Sanster/IOPaint#, thanks for their amazing work!
 
@@ -17,7 +18,7 @@ from sorawm.iopaint.schema import InpaintRequest
 class WaterMarkCleaner:
     def __init__(self):
         self.model = DEFAULT_WATERMARK_REMOVE_MODEL
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = get_device()
 
         scanned_models = scan_models()
         if self.model not in [it.name for it in scanned_models]:
