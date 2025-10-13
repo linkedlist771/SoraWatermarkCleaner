@@ -1,5 +1,6 @@
 from pathlib import Path
 from typing import Callable
+import threading
 
 import ffmpeg
 import numpy as np
@@ -177,52 +178,78 @@ class SoraWM:
         )
 
         try:
-            # Stage 1: Feed frames into pipeline (10% - 50%)
-            logger.info("[Pipeline] Feeding frames to detection queue...")
-            for idx, frame in enumerate(
-                tqdm(input_video_loader, total=total_frames, desc="Feeding frames to pipeline")
-            ):
-                pipeline.put_frame(idx, frame, timeout=10.0)
-
-                if progress_callback and idx % 10 == 0:
-                    progress = 10 + int((idx / total_frames) * 40)
-                    progress_callback(progress)
-
-            # Signal end of input
-            pipeline.signal_end()
-            logger.info("[Pipeline] All frames fed, waiting for processing to complete...")
-
-            if progress_callback:
-                progress_callback(50)
-
-            # Stage 2: Receive cleaned frames from pipeline and write to video (50% - 95%)
-            logger.info("[Pipeline] Receiving cleaned frames...")
+            # Use threading to overlap input and output operations
             frame_buffer = {}  # Buffer for out-of-order frames
             next_frame_idx = 0
             received_count = 0
+            input_error = None
+            output_error = None
             
-            with tqdm(total=total_frames, desc="Writing cleaned frames") as pbar:
-                while received_count < total_frames:
-                    result = pipeline.get_cleaned_frame(timeout=30.0)
-                    if result is None:  # End signal
-                        break
-
-                    idx, cleaned_frame = result
-                    frame_buffer[idx] = cleaned_frame
-                    received_count += 1
-                    
-                    # Write frames in order
-                    while next_frame_idx in frame_buffer:
-                        process_out.stdin.write(frame_buffer[next_frame_idx].tobytes())
-                        del frame_buffer[next_frame_idx]
-                        next_frame_idx += 1
-                        pbar.update(1)
-
-                        if progress_callback and next_frame_idx % 10 == 0:
-                            progress = 50 + int((next_frame_idx / total_frames) * 45)
+            def input_worker():
+                """Thread to feed frames into pipeline"""
+                nonlocal input_error
+                try:
+                    logger.info("[Pipeline] Starting input worker thread...")
+                    for idx, frame in enumerate(input_video_loader):
+                        pipeline.put_frame(idx, frame, timeout=30.0)
+                        if progress_callback and idx % 10 == 0:
+                            progress = 10 + int((idx / total_frames) * 20)
                             progress_callback(progress)
+                    
+                    # Signal end of input
+                    pipeline.signal_end()
+                    logger.info("[Pipeline] Input worker: All frames fed")
+                except Exception as e:
+                    input_error = e
+                    logger.error(f"[Pipeline] Input worker error: {e}")
+            
+            def output_worker():
+                """Thread to receive cleaned frames and write to video"""
+                nonlocal next_frame_idx, received_count, output_error
+                try:
+                    logger.info("[Pipeline] Starting output worker thread...")
+                    with tqdm(total=total_frames, desc="Processing frames") as pbar:
+                        while received_count < total_frames:
+                            result = pipeline.get_cleaned_frame(timeout=30.0)
+                            if result is None:  # End signal
+                                break
 
-            logger.info(f"[Pipeline] Processed {next_frame_idx} frames total")
+                            idx, cleaned_frame = result
+                            frame_buffer[idx] = cleaned_frame
+                            received_count += 1
+                            
+                            # Write frames in order
+                            while next_frame_idx in frame_buffer:
+                                process_out.stdin.write(frame_buffer[next_frame_idx].tobytes())
+                                del frame_buffer[next_frame_idx]
+                                next_frame_idx += 1
+                                pbar.update(1)
+
+                                if progress_callback and next_frame_idx % 10 == 0:
+                                    progress = 30 + int((next_frame_idx / total_frames) * 65)
+                                    progress_callback(progress)
+                    
+                    logger.info(f"[Pipeline] Output worker: Processed {next_frame_idx} frames total")
+                except Exception as e:
+                    output_error = e
+                    logger.error(f"[Pipeline] Output worker error: {e}")
+            
+            # Start both threads
+            input_thread = threading.Thread(target=input_worker, name="InputWorker")
+            output_thread = threading.Thread(target=output_worker, name="OutputWorker")
+            
+            input_thread.start()
+            output_thread.start()
+            
+            # Wait for both threads to complete
+            input_thread.join()
+            output_thread.join()
+            
+            # Check for errors
+            if input_error:
+                raise input_error
+            if output_error:
+                raise output_error
 
             process_out.stdin.close()
             process_out.wait()
