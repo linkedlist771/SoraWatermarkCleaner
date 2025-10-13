@@ -9,6 +9,7 @@ from tqdm import tqdm
 from sorawm.utils.video_utils import VideoLoader
 from sorawm.watermark_cleaner import WaterMarkCleaner
 from sorawm.watermark_detector import SoraWaterMarkDetector
+from sorawm.pipeline import PipelineManager
 
 
 class SoraWM:
@@ -119,6 +120,116 @@ class SoraWM:
 
         if progress_callback:
             progress_callback(99)
+
+    def run_overlap(
+        self,
+        input_video_path: Path,
+        output_video_path: Path,
+        progress_callback: Callable[[int], None] | None = None,
+    ):
+        """
+        Run with pipeline architecture for overlapping detection and cleaning to improve GPU utilization.
+        
+        Args:
+            input_video_path: Input video path
+            output_video_path: Output video path
+            progress_callback: Progress callback function
+        """
+        input_video_loader = VideoLoader(input_video_path)
+        output_video_path.parent.mkdir(parents=True, exist_ok=True)
+        width = input_video_loader.width
+        height = input_video_loader.height
+        fps = input_video_loader.fps
+        total_frames = input_video_loader.total_frames
+
+        logger.debug(
+            f"Total frames: {total_frames}, FPS: {fps}, Width: {width}, Height: {height}"
+        )
+
+        # Create pipeline manager
+        pipeline = PipelineManager(width=width, height=height, queue_size=30)
+
+        # Prepare video output
+        temp_output_path = output_video_path.parent / f"temp_{output_video_path.name}"
+        output_options = {
+            "pix_fmt": "yuv420p",
+            "vcodec": "libx264",
+            "preset": "slow",
+        }
+
+        if input_video_loader.original_bitrate:
+            output_options["video_bitrate"] = str(int(int(input_video_loader.original_bitrate) * 1.2))
+        else:
+            output_options["crf"] = "18"
+
+        process_out = (
+            ffmpeg.input(
+                "pipe:",
+                format="rawvideo",
+                pix_fmt="bgr24",
+                s=f"{width}x{height}",
+                r=fps,
+            )
+            .output(str(temp_output_path), **output_options)
+            .overwrite_output()
+            .global_args("-loglevel", "error")
+            .run_async(pipe_stdin=True)
+        )
+
+        try:
+            # Stage 1: Feed frames into pipeline (10% - 50%)
+            logger.info("[Pipeline] Feeding frames to detection queue...")
+            for idx, frame in enumerate(
+                tqdm(input_video_loader, total=total_frames, desc="Feeding frames to pipeline")
+            ):
+                pipeline.put_frame(idx, frame, timeout=10.0)
+
+                if progress_callback and idx % 10 == 0:
+                    progress = 10 + int((idx / total_frames) * 40)
+                    progress_callback(progress)
+
+            # Signal end of input
+            pipeline.signal_end()
+            logger.info("[Pipeline] All frames fed, waiting for processing to complete...")
+
+            if progress_callback:
+                progress_callback(50)
+
+            # Stage 2: Receive cleaned frames from pipeline and write to video (50% - 95%)
+            logger.info("[Pipeline] Receiving cleaned frames...")
+            frame_count = 0
+            with tqdm(total=total_frames, desc="Writing cleaned frames") as pbar:
+                while True:
+                    result = pipeline.get_cleaned_frame(timeout=30.0)
+                    if result is None:  # End signal
+                        break
+
+                    idx, cleaned_frame = result
+                    process_out.stdin.write(cleaned_frame.tobytes())
+                    frame_count += 1
+                    pbar.update(1)
+
+                    if progress_callback and frame_count % 10 == 0:
+                        progress = 50 + int((frame_count / total_frames) * 45)
+                        progress_callback(progress)
+
+            logger.info(f"[Pipeline] Processed {frame_count} frames total")
+
+            process_out.stdin.close()
+            process_out.wait()
+
+            if progress_callback:
+                progress_callback(95)
+
+            # Stage 3: Merge audio track (95% - 99%)
+            self.merge_audio_track(input_video_path, temp_output_path, output_video_path)
+
+            if progress_callback:
+                progress_callback(99)
+
+        finally:
+            # Ensure pipeline is properly shutdown
+            pipeline.shutdown()
 
     def merge_audio_track(
         self, input_video_path: Path, temp_output_path: Path, output_video_path: Path
