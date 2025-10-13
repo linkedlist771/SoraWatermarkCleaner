@@ -197,23 +197,32 @@ class SoraWM:
 
             # Stage 2: Receive cleaned frames from pipeline and write to video (50% - 95%)
             logger.info("[Pipeline] Receiving cleaned frames...")
-            frame_count = 0
+            frame_buffer = {}  # Buffer for out-of-order frames
+            next_frame_idx = 0
+            received_count = 0
+            
             with tqdm(total=total_frames, desc="Writing cleaned frames") as pbar:
-                while True:
+                while received_count < total_frames:
                     result = pipeline.get_cleaned_frame(timeout=30.0)
                     if result is None:  # End signal
                         break
 
                     idx, cleaned_frame = result
-                    process_out.stdin.write(cleaned_frame.tobytes())
-                    frame_count += 1
-                    pbar.update(1)
+                    frame_buffer[idx] = cleaned_frame
+                    received_count += 1
+                    
+                    # Write frames in order
+                    while next_frame_idx in frame_buffer:
+                        process_out.stdin.write(frame_buffer[next_frame_idx].tobytes())
+                        del frame_buffer[next_frame_idx]
+                        next_frame_idx += 1
+                        pbar.update(1)
 
-                    if progress_callback and frame_count % 10 == 0:
-                        progress = 50 + int((frame_count / total_frames) * 45)
-                        progress_callback(progress)
+                        if progress_callback and next_frame_idx % 10 == 0:
+                            progress = 50 + int((next_frame_idx / total_frames) * 45)
+                            progress_callback(progress)
 
-            logger.info(f"[Pipeline] Processed {frame_count} frames total")
+            logger.info(f"[Pipeline] Processed {next_frame_idx} frames total")
 
             process_out.stdin.close()
             process_out.wait()

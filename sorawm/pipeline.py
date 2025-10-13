@@ -100,9 +100,11 @@ class CleanerWorker:
         # Initialize cleaner in subprocess to avoid CUDA context issues
         worker.cleaner = WaterMarkCleaner()
         
-        # Buffer for handling frames with failed detections
-        detection_buffer = {}
-        detect_missed = []
+        # Buffer for handling frames with failed detections and out-of-order processing
+        # Store recent frames for bbox interpolation
+        recent_frames = {}  # idx -> {"frame": frame, "bbox": bbox, "cleaned": cleaned_frame}
+        last_valid_bbox = None
+        processed_count = 0
         
         while True:
             try:
@@ -110,52 +112,57 @@ class CleanerWorker:
                 frame_data = input_queue.get(timeout=1.0)
                 
                 if frame_data is None:  # Shutdown signal
-                    logger.debug("[CleanerWorker] Received shutdown signal, processing missed frames")
-                    
-                    # Handle frames with failed detection (use bbox from neighboring frames)
-                    total_frames = max(detection_buffer.keys()) + 1 if detection_buffer else 0
-                    for missed_idx in detect_missed:
-                        before = max(missed_idx - 1, 0)
-                        after = min(missed_idx + 1, total_frames - 1)
-                        
-                        before_bbox = detection_buffer.get(before, {}).get("bbox")
-                        after_bbox = detection_buffer.get(after, {}).get("bbox")
-                        
-                        if before_bbox:
-                            detection_buffer[missed_idx]["bbox"] = before_bbox
-                        elif after_bbox:
-                            detection_buffer[missed_idx]["bbox"] = after_bbox
-                    
-                    logger.debug(f"[CleanerWorker] Missed detection frames: {detect_missed}")
-                    
-                    # Output all cleaned frames in order
-                    for idx in sorted(detection_buffer.keys()):
-                        frame_info = detection_buffer[idx]
-                        frame = frame_info["frame"]
-                        bbox = frame_info["bbox"]
-                        
-                        if bbox is not None:
-                            x1, y1, x2, y2 = bbox
-                            mask = np.zeros((worker.height, worker.width), dtype=np.uint8)
-                            mask[y1:y2, x1:x2] = 255
-                            cleaned_frame = worker.cleaner.clean(frame, mask)
-                        else:
-                            cleaned_frame = frame
-                        
-                        output_queue.put((idx, cleaned_frame))
+                    logger.debug(f"[CleanerWorker] Received shutdown signal, processed {processed_count} frames")
                     
                     # Send shutdown signal
                     output_queue.put(None)
                     break
                 
-                # Store detection result
-                detection_buffer[frame_data.idx] = {
-                    "frame": frame_data.frame,
-                    "bbox": frame_data.bbox
-                }
+                # Process frame immediately (streaming approach)
+                frame = frame_data.frame
+                bbox = frame_data.bbox
                 
-                if frame_data.bbox is None:
-                    detect_missed.append(frame_data.idx)
+                # If no bbox detected, use last valid bbox or next valid bbox
+                if bbox is None:
+                    # Try to use last valid bbox
+                    if last_valid_bbox is not None:
+                        bbox = last_valid_bbox
+                        logger.debug(f"[CleanerWorker] Frame {frame_data.idx}: Using last valid bbox")
+                    else:
+                        # Store for later processing when we have a valid bbox
+                        recent_frames[frame_data.idx] = {"frame": frame, "bbox": None, "cleaned": None}
+                        continue
+                else:
+                    last_valid_bbox = bbox
+                
+                # Clean the frame
+                if bbox is not None:
+                    x1, y1, x2, y2 = bbox
+                    mask = np.zeros((worker.height, worker.width), dtype=np.uint8)
+                    mask[y1:y2, x1:x2] = 255
+                    cleaned_frame = worker.cleaner.clean(frame, mask)
+                else:
+                    cleaned_frame = frame
+                
+                # Output cleaned frame immediately
+                output_queue.put((frame_data.idx, cleaned_frame))
+                processed_count += 1
+                
+                # Process any pending frames that were waiting for a valid bbox
+                if last_valid_bbox is not None and recent_frames:
+                    pending_indices = sorted(recent_frames.keys())
+                    for pending_idx in pending_indices:
+                        pending_info = recent_frames[pending_idx]
+                        if pending_info["cleaned"] is None:
+                            # Clean with the current valid bbox
+                            x1, y1, x2, y2 = last_valid_bbox
+                            mask = np.zeros((worker.height, worker.width), dtype=np.uint8)
+                            mask[y1:y2, x1:x2] = 255
+                            cleaned = worker.cleaner.clean(pending_info["frame"], mask)
+                            output_queue.put((pending_idx, cleaned))
+                            processed_count += 1
+                            del recent_frames[pending_idx]
+                            logger.debug(f"[CleanerWorker] Frame {pending_idx}: Processed with interpolated bbox")
                 
             except queue.Empty:
                 continue
