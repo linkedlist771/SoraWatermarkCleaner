@@ -15,6 +15,14 @@ from loguru import logger
 from sorawm.watermark_detector import SoraWaterMarkDetector
 from sorawm.watermark_cleaner import WaterMarkCleaner
 
+# Set spawn method for CUDA compatibility
+# Must use 'spawn' instead of 'fork' when using CUDA in subprocesses
+try:
+    mp.set_start_method('spawn', force=True)
+except RuntimeError:
+    # Already set, ignore
+    pass
+
 
 @dataclass
 class FrameData:
