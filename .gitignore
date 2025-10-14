@@ -227,3 +227,7 @@ working_dir
 data
 upload_to_huggingface.py
 python
+
+ffmpeg/*
+!ffmpeg/.gitkeep
+# !ffmpeg/README.md

@@ -26,3 +26,7 @@ DATA_PATH = ROOT / "data"
 DATA_PATH.mkdir(exist_ok=True, parents=True)
 
 SQLITE_PATH = DATA_PATH / "db.sqlite3"
+
+
+FFMPEG_DIR_PATH = ROOT / "ffmpeg"
+FFMPEG_DIR_PATH.mkdir(exist_ok=True, parents=True)

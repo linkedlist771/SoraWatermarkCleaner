@@ -31,6 +31,9 @@ SoraWatermarkCleaner（后面我们简称为 `SoraWm`）由两部分组成：
 
 
 ## 2. 安装
+
+### 2.1 标准安装
+
 视频处理需要 [FFmpeg](https://ffmpeg.org/)，请先安装它。我们强烈推荐使用 `uv` 来安装环境：
 
 1. 安装：
@@ -48,6 +51,35 @@ uv sync
 2. 下载预训练模型：
 
 训练好的 YOLO 权重将存储在 `resources` 目录中，文件名为 `best.pt`。它将从 https://github.com/linkedlist771/SoraWatermarkCleaner/releases/download/V0.0.1/best.pt 自动下载。`Lama` 模型从 https://github.com/Sanster/models/releases/download/add_big_lama/big-lama.pt 下载，并将存储在 torch 缓存目录中。两者都是自动下载的，如果失败，请检查你的网络状态。
+
+### 2.2 Windows 便携版配置
+
+如果你使用 Python Standalone 打包的便携版本，需要配置本地的 FFmpeg：
+
+1. **下载 FFmpeg**：
+   - 访问：https://github.com/BtbN/FFmpeg-Builds/releases
+   - 下载最新的 `ffmpeg-master-latest-win64-gpl.zip`
+   - 解压缩文件
+
+2. **放置 FFmpeg 文件**：
+   - 将解压后的 `bin/ffmpeg.exe` 复制到项目的 `ffmpeg/` 目录
+   - 将解压后的 `bin/ffprobe.exe` 复制到项目的 `ffmpeg/` 目录
+   
+   最终目录结构：
+   ```
+   SoraWatermarkCleaner/
+   ├── ffmpeg/
+   │   ├── ffmpeg.exe
+   │   └── ffprobe.exe
+   ├── python/
+   └── ...
+   ```
+
+3. **验证配置**：
+   - 程序启动时会自动检测并使用 `ffmpeg/` 目录中的 FFmpeg
+   - 如果检测到本地 FFmpeg，将在日志中显示 "✓ FFmpeg已就绪"
+
+> **注意**：程序会优先使用本地 `ffmpeg/` 目录中的 FFmpeg，如果没有找到，则使用系统环境变量中的 FFmpeg。
 
 ## 3. 演示
 

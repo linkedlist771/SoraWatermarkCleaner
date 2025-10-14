@@ -32,6 +32,8 @@ Our SoraWm is purely deeplearning driven and yields good results in many generat
 
 ## 2. Installation
 
+### 2.1 Standard Installation
+
 [FFmpeg](https://ffmpeg.org/) is needed for video processing, please install it first.  We highly recommend using the `uv` to install the environments:
 
 1. installation:
@@ -49,6 +51,35 @@ uv sync
 2. Downloaded the pretrained models:
 
 The trained yolo weights will be stored in the `resources` dir as the `best.pt`.  And it will be automatically download from https://github.com/linkedlist771/SoraWatermarkCleaner/releases/download/V0.0.1/best.pt . The `Lama` model is downloaded from https://github.com/Sanster/models/releases/download/add_big_lama/big-lama.pt, and will be stored in the torch cache dir. Both downloads are automatic, if you fail, please check your internet status.
+
+### 2.2 Windows Portable Version Configuration
+
+If you're using a Python Standalone packaged portable version, you need to configure local FFmpeg:
+
+1. **Download FFmpeg**:
+   - Visit: https://github.com/BtbN/FFmpeg-Builds/releases
+   - Download the latest `ffmpeg-master-latest-win64-gpl.zip`
+   - Extract the archive
+
+2. **Place FFmpeg Files**:
+   - Copy `bin/ffmpeg.exe` from the extracted folder to the project's `ffmpeg/` directory
+   - Copy `bin/ffprobe.exe` from the extracted folder to the project's `ffmpeg/` directory
+   
+   Final directory structure:
+   ```
+   SoraWatermarkCleaner/
+   ├── ffmpeg/
+   │   ├── ffmpeg.exe
+   │   └── ffprobe.exe
+   ├── python/
+   └── ...
+   ```
+
+3. **Verify Configuration**:
+   - The program will automatically detect and use FFmpeg from the `ffmpeg/` directory on startup
+   - If local FFmpeg is detected, you'll see "✓ FFmpeg已就绪" in the logs
+
+> **Note**: The program prioritizes FFmpeg in the local `ffmpeg/` directory. If not found, it will fall back to the system's PATH environment variable.
 
 ## 3.  Demo
 

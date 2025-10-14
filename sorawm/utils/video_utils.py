@@ -1,5 +1,9 @@
 from pathlib import Path
 
+# 初始化ffmpeg路径配置（优先使用本地ffmpeg）
+from sorawm.utils.ffmpeg_utils import init_ffmpeg
+init_ffmpeg()
+
 import ffmpeg
 import numpy as np
 

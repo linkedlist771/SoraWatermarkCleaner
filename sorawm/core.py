@@ -6,6 +6,10 @@ import numpy as np
 from loguru import logger
 from tqdm import tqdm
 
+# 初始化ffmpeg路径配置（优先使用本地ffmpeg）
+from sorawm.utils.ffmpeg_utils import init_ffmpeg
+init_ffmpeg()
+
 from sorawm.utils.video_utils import VideoLoader
 from sorawm.watermark_cleaner import WaterMarkCleaner
 from sorawm.watermark_detector import SoraWaterMarkDetector
