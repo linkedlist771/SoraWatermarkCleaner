@@ -32,3 +32,5 @@ dependencies = [
     "uvicorn>=0.35.0",
 ]
 
+[tool.setuptools]
+packages = ["sorawm"]

@@ -1,0 +1,1 @@
+ .\python\Scripts\streamlit.exe run .\app.py

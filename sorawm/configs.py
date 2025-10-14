@@ -7,6 +7,7 @@ RESOURCES_DIR = ROOT / "resources"
 WATER_MARK_TEMPLATE_IMAGE_PATH = RESOURCES_DIR / "watermark_template.png"
 
 WATER_MARK_DETECT_YOLO_WEIGHTS = RESOURCES_DIR / "best.pt"
+LAMA_CLEAN_WEIGHTS = RESOURCES_DIR / "big-lama.pt"
 
 OUTPUT_DIR = ROOT / "output"
 

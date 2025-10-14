@@ -13,6 +13,7 @@ from sorawm.iopaint.helper import (
 from sorawm.iopaint.schema import InpaintRequest
 
 from .base import InpaintModel
+from ...configs import LAMA_CLEAN_WEIGHTS
 
 LAMA_MODEL_URL = os.environ.get(
     "LAMA_MODEL_URL",
@@ -74,9 +75,10 @@ class AnimeLaMa(LaMa):
         download_model(ANIME_LAMA_MODEL_URL, ANIME_LAMA_MODEL_MD5)
 
     def init_model(self, device, **kwargs):
-        self.model = load_jit_model(
-            ANIME_LAMA_MODEL_URL, device, ANIME_LAMA_MODEL_MD5
-        ).eval()
+        # self.model = load_jit_model(
+        #     ANIME_LAMA_MODEL_URL, device, ANIME_LAMA_MODEL_MD5
+        # ).eval()
+        self.model = torch.jit.load(LAMA_CLEAN_WEIGHTS, map_location="cpu").to(device)
 
     @staticmethod
     def is_downloaded() -> bool:
