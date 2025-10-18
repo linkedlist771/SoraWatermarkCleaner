@@ -58,7 +58,7 @@ Our SoraWm is purely deeplearning driven and yields good results in many generat
 uv sync
 ```
 
-> now the envs will be installed at the `.ven`, you can activate the env using:
+> now the envs will be installed at the `.venv`, you can activate the env using:
 >
 > ```bash
 > source .venv/bin/activate
@@ -84,7 +84,7 @@ For users who prefer a ready-to-use solution without manual installation, we pro
 ### Features
 - ✅ No installation required
 - ✅ All dependencies included
-- ✅ Pre-configured environment
+- ✅ Pre-configured ironment
 - ✅ Ready to use out of the box
 
 Simply download, extract, and run!
