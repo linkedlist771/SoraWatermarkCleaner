@@ -25,6 +25,7 @@ dependencies = [
     "pydantic>=2.11.10",
     "python-multipart>=0.0.20",
     "requests>=2.32.5",
+    "rich>=14.2.0",
     "ruptures>=1.1.10",
     "scikit-learn>=1.7.2",
     "sqlalchemy>=2.0.43",
