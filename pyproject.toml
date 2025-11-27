@@ -37,5 +37,6 @@ dependencies = [
     "ultralytics>=8.3.204",
     "uuid>=1.30",
     "uvicorn>=0.35.0",
+    "playwright>=1.40.0",
 ]
 

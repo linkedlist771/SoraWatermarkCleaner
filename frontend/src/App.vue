@@ -1,7 +1,7 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { ElMessage } from 'element-plus'
-import { UploadFilled, VideoPlay, Download, RefreshRight, Plus, Loading, Check, Warning, Setting } from '@element-plus/icons-vue'
+import { UploadFilled, VideoPlay, Download, RefreshRight, Plus, Loading, Check, Warning, Setting, Link } from '@element-plus/icons-vue'
 import dayjs from 'dayjs'
 import axios from 'axios'
 
@@ -15,6 +15,11 @@ const showUploader = ref(true)
 const timer = ref(null)
 const uploadRef = ref(null) // 用于引用 upload 组件以清理文件
 const selectedModel = ref('lama') // 新增：当前选择的模型
+
+// Sora Downloader State
+const soraUrl = ref('')
+const isDownloading = ref(false)
+const isLoggingIn = ref(false)
 
 // Data State aligned with Backend Models
 const queueSummary = ref({
@@ -92,6 +97,38 @@ const handleUploadChange = async (file) => {
     ElMessage.error({ message: `Upload failed: ${error.message}`, plain: true })
   } finally {
     isUploading.value = false
+  }
+}
+
+// Sora Actions
+const handleSoraLogin = async () => {
+  isLoggingIn.value = true
+  try {
+    await axios.post(`${API_BASE_URL}/sora/login`)
+    ElMessage.success({ message: 'Browser launched for Sora login', plain: true })
+  } catch (error) {
+    ElMessage.error({ message: `Login launch failed: ${error.message}`, plain: true })
+  } finally {
+    isLoggingIn.value = false
+  }
+}
+
+const handleSoraDownload = async () => {
+  if (!soraUrl.value) {
+    ElMessage.warning('Please enter a Sora video URL')
+    return
+  }
+
+  isDownloading.value = true
+  try {
+    await axios.post(`${API_BASE_URL}/sora/download`, { url: soraUrl.value })
+    ElMessage.success({ message: 'Video downloaded and queued!', plain: true })
+    soraUrl.value = ''
+    fetchQueueStatus()
+  } catch (error) {
+    ElMessage.error({ message: `Download failed: ${error.response?.data?.detail || error.message}`, plain: true })
+  } finally {
+    isDownloading.value = false
   }
 }
 
@@ -205,6 +242,43 @@ onUnmounted(() => {
 
       <transition name="el-fade-in-linear">
         <section v-if="showUploader" class="oa-upload-section">
+
+          <!-- Sora Downloader Block -->
+          <div class="oa-sora-downloader">
+            <h3 class="oa-section-title" style="margin-bottom: 12px;">Sora Downloader</h3>
+            <div class="oa-sora-login">
+              <el-button
+                class="oa-login-btn"
+                :loading="isLoggingIn"
+                @click="handleSoraLogin"
+              >
+                <el-icon style="margin-right: 6px;"><Link /></el-icon>
+                Login to Sora (Recommended)
+              </el-button>
+            </div>
+
+            <div class="oa-sora-input-group">
+              <el-input
+                v-model="soraUrl"
+                placeholder="Paste Sora video URL here..."
+                class="oa-sora-input"
+                clearable
+              >
+                <template #prefix>
+                   <el-icon><Link /></el-icon>
+                </template>
+              </el-input>
+              <el-button
+                type="primary"
+                class="oa-download-btn"
+                :loading="isDownloading"
+                @click="handleSoraDownload"
+              >
+                Download
+              </el-button>
+            </div>
+          </div>
+
           <div class="oa-controls">
             <span class="oa-control-label">Model:</span>
             <el-radio-group v-model="selectedModel" size="small" class="oa-radio-group">
@@ -466,6 +540,65 @@ onUnmounted(() => {
   font-size: 13px;
   font-weight: 600;
   color: var(--oa-text-2);
+}
+
+/* Sora Downloader Styles */
+.oa-sora-downloader {
+  background: var(--oa-surface);
+  border: 1px solid var(--oa-border);
+  border-radius: var(--oa-radius-lg);
+  padding: 16px;
+  margin-bottom: 20px;
+}
+
+.oa-sora-login {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 16px;
+}
+
+.oa-login-btn {
+  background: transparent;
+  border: 1px solid var(--oa-border);
+  color: var(--oa-text);
+  border-radius: 8px;
+  font-weight: 600;
+}
+.oa-login-btn:hover {
+  background: var(--oa-surface-2);
+  border-color: var(--oa-text-3);
+  color: var(--oa-text);
+}
+
+.oa-sora-input-group {
+  display: flex;
+  gap: 10px;
+}
+
+.oa-sora-input {
+  flex: 1;
+}
+.oa-sora-input :deep(.el-input__wrapper) {
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 0 0 1px var(--oa-border) inset;
+}
+.oa-sora-input :deep(.el-input__wrapper:hover) {
+  box-shadow: 0 0 0 1px var(--oa-text-3) inset;
+}
+.oa-sora-input :deep(.el-input__wrapper.is-focus) {
+  box-shadow: 0 0 0 1px var(--oa-green) inset;
+}
+
+.oa-download-btn {
+  background: linear-gradient(90deg, #a855f7 0%, #ec4899 100%) !important;
+  border: none !important;
+  border-radius: 8px !important;
+  font-weight: 600;
+  padding: 8px 20px !important;
+}
+.oa-download-btn:hover {
+  opacity: 0.9;
 }
 
 /* Customizing Radio Button to look cleaner */

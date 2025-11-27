@@ -194,7 +194,13 @@ def start(
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         if inbrowser:
-            webbrowser.open(f"http://localhost:{port}", new=0, autoraise=True)
+            try:
+                # Try to get Chrome specifically to avoid Chromium popup issues
+                browser = webbrowser.get("google-chrome")
+                browser.open(f"http://localhost:{port}", new=0, autoraise=True)
+            except webbrowser.Error:
+                # Fallback to default if Chrome not found
+                webbrowser.open(f"http://localhost:{port}", new=0, autoraise=True)
         yield
 
     app = FastAPI(lifespan=lifespan)

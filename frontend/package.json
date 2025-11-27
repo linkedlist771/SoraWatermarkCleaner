@@ -12,6 +12,8 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "axios": "^1.13.2",
+    "dayjs": "^1.11.19",
     "element-plus": "^2.11.8",
     "pinia": "^3.0.4",
     "vue": "^3.5.22"
