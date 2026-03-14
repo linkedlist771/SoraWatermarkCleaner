@@ -72,9 +72,8 @@ static bool test_merge_with_overlap() {
     ASSERT_EQ(result[0].at<cv::Vec3b>(0, 0)[0], 0);
     // Index 2: straight copy.
     ASSERT_EQ(result[2].at<cv::Vec3b>(0, 0)[0], 255);
-    // Index 1: blended (alpha=0 at i=0 means 100% old).
-    // With overlap_end=1 and i=0: alpha=0/1=0 → result stays at 100.
-    ASSERT_EQ(result[1].at<cv::Vec3b>(0, 0)[0], 100);
+    // Index 1: overlap_end=1, only frame (i=0), alpha=1.0 → 100% new = 200.
+    ASSERT_EQ(result[1].at<cv::Vec3b>(0, 0)[0], 200);
     return true;
 }
 

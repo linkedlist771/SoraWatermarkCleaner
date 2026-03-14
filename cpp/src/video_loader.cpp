@@ -85,13 +85,15 @@ void merge_frames_with_overlap(
         result_frames.resize(required);
     }
 
-    // Blend the overlap region.
+    // Blend the overlap region with linear interpolation.
+    // alpha ramps from 0.0 (100 % old) to 1.0 (100 % new) across the
+    // overlap window, matching the original Python behaviour.
     const int overlap_end = std::min(overlap_size, chunk_size);
     for (int i = 0; i < overlap_end; ++i) {
         const int ri = start_idx + i;
         if (!result_frames[ri].empty() && !chunk_frames[i].empty()) {
-            const double alpha = (overlap_end > 0)
-                ? static_cast<double>(i) / overlap_end
+            const double alpha = (overlap_end > 1)
+                ? static_cast<double>(i) / (overlap_end - 1)
                 : 1.0;
             cv::addWeighted(result_frames[ri], 1.0 - alpha,
                             chunk_frames[i], alpha, 0.0,

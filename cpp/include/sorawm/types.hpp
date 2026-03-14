@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -34,6 +35,6 @@ inline CleanerType cleaner_type_from_string(const std::string& s) {
 }
 
 /// Progress callback: receives a percentage 0–100.
-using ProgressCallback = void (*)(int percent);
+using ProgressCallback = std::function<void(int percent)>;
 
 } // namespace sorawm

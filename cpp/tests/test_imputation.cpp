@@ -131,8 +131,9 @@ static bool test_find_2d_data_bkps_with_jump() {
     for (int i = 0; i < 30; ++i) centers.push_back(std::make_pair(500, 500));
     auto bkps = find_2d_data_bkps(centers);
     ASSERT_TRUE(!bkps.empty());
-    // The breakpoint should be somewhere around index 30.
-    ASSERT_TRUE(bkps[0] >= 20 && bkps[0] <= 40);
+    // The breakpoint should be near index 30 (±7 frames tolerance for the
+    // heuristic sliding-window algorithm).
+    ASSERT_TRUE(bkps[0] >= 23 && bkps[0] <= 37);
     return true;
 }
 

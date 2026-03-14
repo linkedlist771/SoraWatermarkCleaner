@@ -68,9 +68,12 @@ int main(int argc, char** argv) {
     cfg.detect_batch_size = batch_size;
     cfg.quiet             = quiet;
 
-    auto progress_fn = quiet ? nullptr : +[](int pct) {
-        std::cout << "\rProgress: " << pct << " %" << std::flush;
-    };
+    sorawm::ProgressCallback progress_fn = nullptr;
+    if (!quiet) {
+        progress_fn = [](int pct) {
+            std::cout << "\rProgress: " << pct << " %" << std::flush;
+        };
+    }
 
     try {
         sorawm::Pipeline pipeline(cfg);

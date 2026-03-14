@@ -60,13 +60,16 @@ DetectionResult WatermarkDetector::postprocess(
     DetectionResult best;
     best.detected = false;
 
+    // YOLO ONNX output layout per detection (stride = 6):
+    //   [0] x_center  [1] y_center  [2] width  [3] height
+    //   [4] confidence  [5] class_id (unused – single-class model)
+    constexpr int kStride = 6;
     for (int i = 0; i < num_detections; ++i) {
-        // YOLO ONNX output format: [x_center, y_center, w, h, conf, cls...]
-        float cx   = data[i * 6 + 0];
-        float cy   = data[i * 6 + 1];
-        float w    = data[i * 6 + 2];
-        float h    = data[i * 6 + 3];
-        float conf = data[i * 6 + 4];
+        float cx   = data[i * kStride + 0];
+        float cy   = data[i * kStride + 1];
+        float w    = data[i * kStride + 2];
+        float h    = data[i * kStride + 3];
+        float conf = data[i * kStride + 4];
 
         if (conf < conf_threshold) continue;
 

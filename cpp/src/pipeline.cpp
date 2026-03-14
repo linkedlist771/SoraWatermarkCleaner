@@ -132,7 +132,8 @@ void Pipeline::run(const std::string& input_path,
     fs::path out(output_path);
     fs::create_directories(out.parent_path());
 
-    // Open video writer (H.264).
+    // Open video writer.  Try H.264 first (best for .mp4 output), then
+    // fall back to MJPG which works with .avi and most other containers.
     cv::VideoWriter writer(
         output_path,
         cv::VideoWriter::fourcc('a', 'v', 'c', '1'),
@@ -140,7 +141,6 @@ void Pipeline::run(const std::string& input_path,
         cv::Size(W, H));
 
     if (!writer.isOpened()) {
-        // Fallback to MJPG if H.264 is not available.
         writer.open(output_path,
                     cv::VideoWriter::fourcc('M', 'J', 'P', 'G'),
                     fps, cv::Size(W, H));

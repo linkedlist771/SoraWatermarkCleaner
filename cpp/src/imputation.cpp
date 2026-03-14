@@ -80,7 +80,9 @@ std::vector<int> find_2d_data_bkps(
         double dist = std::sqrt((lx - rx) * (lx - rx) + (ly - ry) * (ly - ry));
         if (dist > threshold) {
             bkps.push_back(i);
-            // Skip ahead to avoid redundant breakpoints within the same jump.
+            // Skip ahead by half a window to avoid redundant breakpoints
+            // within the same jump.  The loop increment adds 1, so the
+            // next iteration starts at i + half.
             i += half - 1;
         }
     }
