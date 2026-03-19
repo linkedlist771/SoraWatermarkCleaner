@@ -262,8 +262,9 @@ class E2FGVIHDCleaner:
             with torch.no_grad():
                 masked_imgs = selected_imgs * (1 - selected_masks)
                 if h_pad > 0 or w_pad > 0:
+                    # pad last 3 dims: (C_left, C_right, W_left, W_right, H_left, H_right)
                     masked_imgs = torch.nn.functional.pad(
-                        masked_imgs, (0, w_pad, 0, h_pad), mode="reflect"
+                        masked_imgs, (0, w_pad, 0, h_pad, 0, 0), mode="reflect"
                     )
                 pred_imgs, _ = self.model(masked_imgs, len(neighbor_ids))
                 pred_imgs = pred_imgs[:, :, :h, :w]
