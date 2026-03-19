@@ -9,3 +9,4 @@ f7661c6	37.43	28.47	12.3	keep	preload all frames once + direct GPU tensor conver
 814ae2f	-	-	-	info	detect_batch_size 4->8 (already in benchmark)
 1a4d5af	-	-	-	discard	GPU compositing (41s warm, worse than no-compositing)
 a06a71d	36.05	41.06	22.0	baseline	PyTorch 2.9.1 baseline: reverted bad exps + detect frame reuse + batch=8; torch.compile 41s vs 78s no-compile
+276a381	23.57	39.53	22.0	keep	LAMA batch=4 inference (2x per-frame speedup) + detect_batch_size=16
