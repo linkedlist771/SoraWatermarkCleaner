@@ -243,7 +243,24 @@ class E2FGVIHDCleaner:
         Returns:
             List[np.ndarray]: List of length `chunk_length` containing the composited uint8 frames (H x W x 3) for processed indices; entries may be `None` for frames that were not covered/updated.
         """
-        comp_frames_chunk = [None] * chunk_length
+        # Move compositing arrays to GPU once per chunk (avoids repeated small GPU->CPU transfers)
+        comp_device = imgs_chunk.device
+        # binary_masks_chunk: (chunk_length, H, W, 1) uint8 -> float32 GPU tensor
+        binary_masks_gpu = torch.from_numpy(binary_masks_chunk).to(
+            device=comp_device, dtype=torch.float32
+        )  # (T, H, W, 1)
+        # frames_np_chunk: (chunk_length, H, W, 3) uint8 -> float32 GPU tensor
+        frames_gpu = torch.from_numpy(frames_np_chunk).to(
+            device=comp_device, dtype=torch.float32
+        )  # (T, H, W, 3)
+
+        # Accumulators on GPU: sum of composited values and blend count per frame
+        comp_sum_gpu = torch.zeros(
+            (chunk_length, h, w, 3), dtype=torch.float32, device=comp_device
+        )
+        comp_count_gpu = torch.zeros(
+            (chunk_length,), dtype=torch.float32, device=comp_device
+        )
 
         for f in tqdm(
             range(0, chunk_length, neighbor_stride),
@@ -281,26 +298,36 @@ class E2FGVIHDCleaner:
                 pred_imgs, _ = self.model(masked_imgs, len(neighbor_ids))
                 nvtx.range_pop()  # model_forward
                 nvtx.range_push("postprocess")
-                pred_imgs = pred_imgs[:, :, :h, :w]
+                # Crop, normalize and take only neighbor frames (model outputs all frames including refs)
+                pred_imgs = pred_imgs[:len(neighbor_ids), :, :h, :w]
                 pred_imgs = (pred_imgs + 1) / 2
-                # Convert BFloat16 to Float32 before numpy conversion (numpy doesn't support BFloat16)
                 if pred_imgs.dtype == torch.bfloat16:
                     pred_imgs = pred_imgs.float()
-                pred_imgs = pred_imgs.cpu().permute(0, 2, 3, 1).numpy() * 255
+                # pred_imgs: (N_neighbors, 3, H, W) -> (N_neighbors, H, W, 3)
+                pred_imgs = pred_imgs.permute(0, 2, 3, 1) * 255.0
+
+                # GPU compositing: blend pred_imgs with original frames using binary mask
+                neighbor_ids_t = torch.tensor(neighbor_ids, device=comp_device)
+                frames_sel = frames_gpu[neighbor_ids_t]           # (N, H, W, 3)
+                masks_sel = binary_masks_gpu[neighbor_ids_t]      # (N, H, W, 1)
+                composited = pred_imgs * masks_sel + frames_sel * (1.0 - masks_sel)  # (N, H, W, 3)
+
+                # Accumulate: for frames hit multiple times, average them
+                comp_sum_gpu[neighbor_ids_t] += composited
+                comp_count_gpu[neighbor_ids_t] += 1.0
                 nvtx.range_pop()  # postprocess
 
-                for i in range(len(neighbor_ids)):
-                    idx = neighbor_ids[i]
-                    img = np.array(pred_imgs[i]).astype(np.uint8) * binary_masks_chunk[
-                        idx
-                    ] + frames_np_chunk[idx] * (1 - binary_masks_chunk[idx])
-                    if comp_frames_chunk[idx] is None:
-                        comp_frames_chunk[idx] = img
-                    else:
-                        comp_frames_chunk[idx] = (
-                            comp_frames_chunk[idx].astype(np.float32) * 0.5
-                            + img.astype(np.float32) * 0.5
-                        )
+        # Single GPU->CPU transfer for the whole chunk
+        # Average frames hit multiple times (overlap between neighbor windows)
+        valid_mask = comp_count_gpu > 0  # (chunk_length,)
+        comp_frames_chunk = [None] * chunk_length
+        if valid_mask.any():
+            counts = comp_count_gpu[valid_mask].unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)  # (N_valid, 1, 1, 1)
+            averaged = (comp_sum_gpu[valid_mask] / counts).clamp(0, 255).to(torch.uint8)
+            averaged_np = averaged.cpu().numpy()  # Single transfer
+            valid_indices = valid_mask.nonzero(as_tuple=False).squeeze(-1).tolist()
+            for out_i, chunk_i in enumerate(valid_indices):
+                comp_frames_chunk[chunk_i] = averaged_np[out_i]
 
         return comp_frames_chunk
 
