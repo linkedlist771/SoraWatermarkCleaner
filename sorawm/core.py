@@ -156,6 +156,7 @@ class SoraWM:
         # Batch detection: accumulate frames and process in batches
         batch_frames = []
         batch_indices = []
+        all_frames_bgr_detect = []  # Collect all frames to reuse in cleaning pass
 
         for idx, frame in enumerate(
             tqdm(
@@ -165,6 +166,7 @@ class SoraWM:
                 disable=quiet,
             )
         ):
+            all_frames_bgr_detect.append(frame)
             batch_frames.append(frame)
             batch_indices.append(idx)
 
@@ -268,11 +270,10 @@ class SoraWM:
             del detect_missed
 
         if self.cleaner_type == CleanerType.LAMA:
-            ## 1. Lama Cleaner Strategy.
-            input_video_loader = VideoLoader(input_video_path)
+            ## 1. Lama Cleaner Strategy — reuse frames collected during detection pass.
             for idx, frame in enumerate(
                 tqdm(
-                    input_video_loader,
+                    all_frames_bgr_detect,
                     total=total_frames,
                     desc="Remove watermarks",
                     disable=quiet,
@@ -299,9 +300,9 @@ class SoraWM:
             all_cleaned_frames = None
             # The original bkps' sep maybe too large to excel the chunk_size, so we need to refine it based on the VRAM.
             bkps_full = refine_bkps_by_chunk_size(bkps_full, self.cleaner.chunk_size)
-            # Pre-load all frames once to avoid repeated FFmpeg subprocess starts per segment
-            input_video_loader = VideoLoader(input_video_path)
-            all_frames_bgr = np.array(list(input_video_loader))  # (T, H, W, 3) BGR
+            # Reuse frames collected during detection pass (avoids second VideoLoader)
+            all_frames_bgr = np.array(all_frames_bgr_detect)
+            del all_frames_bgr_detect
             # Convert BGR to RGB for E2FGVI_HQ cleaner (expects RGB format)
             all_frames_rgb = all_frames_bgr[:, :, :, ::-1].copy()
             del all_frames_bgr

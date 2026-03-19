@@ -15,7 +15,7 @@ from sorawm.configs import (
     E2FGVI_HQ_TORCH_COMPILE_ARTIFACTS_BF16,
     ENABLE_E2FGVI_HQ_TORCH_COMPILE,
 )
-from sorawm.constants import CHUNK_SIZE_PER_GB_VRAM
+from sorawm.constants import CHUNK_SIZE_PER_GB_VRAM, MAX_ADAPTED_CHUNK_SIZE
 from sorawm.models.model.e2fgvi_hq import InpaintGenerator
 from sorawm.utils.devices_utils import get_device, is_bf16_supported
 from sorawm.utils.download_utils import ensure_model_downloaded
@@ -98,7 +98,7 @@ if device.type == "mps":
 class E2FGVIHDConfig(BaseModel):
     ref_length: int = 10
     num_ref: int = -1
-    neighbor_stride: int = 10
+    neighbor_stride: int = 5
     chunk_size_ratio: float = 0.2  # TODO: this can be adjust as the VRAM
     overlap_ratio: int = 0.05
     enable_torch_compile: bool = ENABLE_E2FGVI_HQ_TORCH_COMPILE
@@ -196,7 +196,7 @@ class E2FGVIHDCleaner:
             adapted_chunk_size = int(
                 memory_profiling_results.free_memory * CHUNK_SIZE_PER_GB_VRAM
             )
-            self.adapted_chunk_size = adapted_chunk_size
+            self.adapted_chunk_size = min(adapted_chunk_size, MAX_ADAPTED_CHUNK_SIZE)
             logger.debug(
                 # keep two digit
                 f"Chunk size is set to {self.adapted_chunk_size} based on the free VRAM {round(memory_profiling_results.free_memory, 2)}GB"
@@ -243,24 +243,7 @@ class E2FGVIHDCleaner:
         Returns:
             List[np.ndarray]: List of length `chunk_length` containing the composited uint8 frames (H x W x 3) for processed indices; entries may be `None` for frames that were not covered/updated.
         """
-        # Move compositing arrays to GPU once per chunk (avoids repeated small GPU->CPU transfers)
-        comp_device = imgs_chunk.device
-        # binary_masks_chunk: (chunk_length, H, W, 1) uint8 -> float32 GPU tensor
-        binary_masks_gpu = torch.from_numpy(binary_masks_chunk).to(
-            device=comp_device, dtype=torch.float32
-        )  # (T, H, W, 1)
-        # frames_np_chunk: (chunk_length, H, W, 3) uint8 -> float32 GPU tensor
-        frames_gpu = torch.from_numpy(frames_np_chunk).to(
-            device=comp_device, dtype=torch.float32
-        )  # (T, H, W, 3)
-
-        # Accumulators on GPU: sum of composited values and blend count per frame
-        comp_sum_gpu = torch.zeros(
-            (chunk_length, h, w, 3), dtype=torch.float32, device=comp_device
-        )
-        comp_count_gpu = torch.zeros(
-            (chunk_length,), dtype=torch.float32, device=comp_device
-        )
+        comp_frames_chunk = [None] * chunk_length
 
         for f in tqdm(
             range(0, chunk_length, neighbor_stride),
@@ -285,7 +268,7 @@ class E2FGVIHDCleaner:
             selected_imgs = imgs_chunk[:1, neighbor_ids + ref_ids, :, :, :]
             selected_masks = masks_chunk[:1, neighbor_ids + ref_ids, :, :, :]
 
-            with torch.no_grad():
+            with torch.inference_mode():
                 nvtx.range_push("prepare_input")
                 masked_imgs = selected_imgs * (1 - selected_masks)
                 if h_pad > 0 or w_pad > 0:
@@ -298,36 +281,26 @@ class E2FGVIHDCleaner:
                 pred_imgs, _ = self.model(masked_imgs, len(neighbor_ids))
                 nvtx.range_pop()  # model_forward
                 nvtx.range_push("postprocess")
-                # Crop, normalize and take only neighbor frames (model outputs all frames including refs)
+                # Crop and take only neighbor frames (model outputs all frames including refs)
                 pred_imgs = pred_imgs[:len(neighbor_ids), :, :h, :w]
                 pred_imgs = (pred_imgs + 1) / 2
                 if pred_imgs.dtype == torch.bfloat16:
                     pred_imgs = pred_imgs.float()
-                # pred_imgs: (N_neighbors, 3, H, W) -> (N_neighbors, H, W, 3)
-                pred_imgs = pred_imgs.permute(0, 2, 3, 1) * 255.0
+                pred_imgs = pred_imgs.cpu().permute(0, 2, 3, 1).numpy() * 255
 
-                # GPU compositing: blend pred_imgs with original frames using binary mask
-                neighbor_ids_t = torch.tensor(neighbor_ids, device=comp_device)
-                frames_sel = frames_gpu[neighbor_ids_t]           # (N, H, W, 3)
-                masks_sel = binary_masks_gpu[neighbor_ids_t]      # (N, H, W, 1)
-                composited = pred_imgs * masks_sel + frames_sel * (1.0 - masks_sel)  # (N, H, W, 3)
-
-                # Accumulate: for frames hit multiple times, average them
-                comp_sum_gpu[neighbor_ids_t] += composited
-                comp_count_gpu[neighbor_ids_t] += 1.0
+                for i in range(len(neighbor_ids)):
+                    idx = neighbor_ids[i]
+                    img = np.array(pred_imgs[i]).astype(np.uint8) * binary_masks_chunk[
+                        idx
+                    ] + frames_np_chunk[idx] * (1 - binary_masks_chunk[idx])
+                    if comp_frames_chunk[idx] is None:
+                        comp_frames_chunk[idx] = img
+                    else:
+                        comp_frames_chunk[idx] = (
+                            comp_frames_chunk[idx].astype(np.float32) * 0.5
+                            + img.astype(np.float32) * 0.5
+                        )
                 nvtx.range_pop()  # postprocess
-
-        # Single GPU->CPU transfer for the whole chunk
-        # Average frames hit multiple times (overlap between neighbor windows)
-        valid_mask = comp_count_gpu > 0  # (chunk_length,)
-        comp_frames_chunk = [None] * chunk_length
-        if valid_mask.any():
-            counts = comp_count_gpu[valid_mask].unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)  # (N_valid, 1, 1, 1)
-            averaged = (comp_sum_gpu[valid_mask] / counts).clamp(0, 255).to(torch.uint8)
-            averaged_np = averaged.cpu().numpy()  # Single transfer
-            valid_indices = valid_mask.nonzero(as_tuple=False).squeeze(-1).tolist()
-            for out_i, chunk_i in enumerate(valid_indices):
-                comp_frames_chunk[chunk_i] = averaged_np[out_i]
 
         return comp_frames_chunk
 
@@ -395,12 +368,7 @@ class E2FGVIHDCleaner:
                 overlap_size=overlap_size,
                 is_first_chunk=(chunk_idx == 0),
             )
-            # Clear GPU memory
             del imgs_chunk, masks_chunk, comp_frames_chunk
-            try:
-                torch.cuda.empty_cache()
-            except:
-                pass
 
         # Save torch compile artifacts after first inference
         if self.config.enable_torch_compile and not self._artifacts_saved:
