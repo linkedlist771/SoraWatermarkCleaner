@@ -281,8 +281,7 @@ class E2FGVIHDCleaner:
                 pred_imgs, _ = self.model(masked_imgs, len(neighbor_ids))
                 nvtx.range_pop()  # model_forward
                 nvtx.range_push("postprocess")
-                # Crop and take only neighbor frames (model outputs all frames including refs)
-                pred_imgs = pred_imgs[:len(neighbor_ids), :, :h, :w]
+                pred_imgs = pred_imgs[:, :, :h, :w]
                 pred_imgs = (pred_imgs + 1) / 2
                 if pred_imgs.dtype == torch.bfloat16:
                     pred_imgs = pred_imgs.float()

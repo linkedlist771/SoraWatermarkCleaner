@@ -1,0 +1,11 @@
+commit	lama_time_s	e2fgvi_time_s	peak_vram_gb	status	description
+3c8524d	37.95	58.33	12.3	keep	baseline: LAMA + E2FGVI best config (torch.compile+batch+bf16)
+10b7b21	37.54	57.22	12.3	keep	F.pad padding + bf16 at chunk level + pre-compute h_pad/w_pad + set ref_index
+crash	0.00	0.00	0.0	crash	single-chunk per segment (OOM: 7GB needed but 4.39GB free)
+c906814	37.71	57.59	12.3	discard	chunk_size_ratio 0.35 + no empty_cache (no improvement)
+f7661c6	37.43	28.47	12.3	keep	preload all frames once + direct GPU tensor conversion (neighbor_stride=5 batch=4)
+8c2dbb7	37.41	29.13	12.3	keep	reuse detect frames + no empty_cache + inference_mode + chunk_size cap at 50 [PyTorch 2.5 era]
+1ed664b	-	-	-	discard	stride=10 experiment (44s warm, worse)
+814ae2f	-	-	-	info	detect_batch_size 4->8 (already in benchmark)
+1a4d5af	-	-	-	discard	GPU compositing (41s warm, worse than no-compositing)
+a06a71d	36.05	41.06	22.0	baseline	PyTorch 2.9.1 baseline: reverted bad exps + detect frame reuse + batch=8; torch.compile 41s vs 78s no-compile
