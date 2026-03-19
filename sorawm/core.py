@@ -294,12 +294,17 @@ class SoraWM:
                     progress_callback(progress)
         elif self.cleaner_type == CleanerType.E2FGVI_HQ:
             ## 2. E2FGVI_HQ Cleaner Strategy with overlap blending.
-            input_video_loader = VideoLoader(input_video_path)
             frame_counter = 0
             overlap_ratio = self.cleaner.config.overlap_ratio
             all_cleaned_frames = None
             # The original bkps' sep maybe too large to excel the chunk_size, so we need to refine it based on the VRAM.
             bkps_full = refine_bkps_by_chunk_size(bkps_full, self.cleaner.chunk_size)
+            # Pre-load all frames once to avoid repeated FFmpeg subprocess starts per segment
+            input_video_loader = VideoLoader(input_video_path)
+            all_frames_bgr = np.array(list(input_video_loader))  # (T, H, W, 3) BGR
+            # Convert BGR to RGB for E2FGVI_HQ cleaner (expects RGB format)
+            all_frames_rgb = all_frames_bgr[:, :, :, ::-1].copy()
+            del all_frames_bgr
             # Create overlapping segments for smooth transitions
             num_segments = len(bkps_full) - 1
             for segment_idx in tqdm(
@@ -332,9 +337,7 @@ class SoraWM:
                         f"with_overlap=[{start}, {end}), overlap={segment_overlap}"
                     )
 
-                frames = np.array(input_video_loader.get_slice(start, end))
-                # Convert BGR to RGB for E2FGVI_HQ cleaner (expects RGB format)
-                frames = frames[:, :, :, ::-1].copy()
+                frames = all_frames_rgb[start:end]
 
                 masks = np.zeros((len(frames), height, width), dtype=np.uint8)
                 for idx in range(start, end):

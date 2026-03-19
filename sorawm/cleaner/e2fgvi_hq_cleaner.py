@@ -55,19 +55,27 @@ def get_ref_index(
     return ref_index
 
 
-def numpy_to_tensor(frames_np, masks_np):
+def numpy_to_tensor(frames_np, masks_np, target_device=None, target_dtype=torch.float32):
     """
-    Convert numpy arrays to tensors
+    Convert numpy arrays to tensors, optionally directly to GPU with target dtype.
+    Skips float32 intermediate when target_dtype is bfloat16.
     frames_np: (T, H, W, 3) uint8 [0, 255]
     masks_np: (T, H, W) uint8 [0, 255]
     Returns: frames tensor (1, T, 3, H, W) [-1, 1], masks tensor (1, T, 1, H, W) [0, 1]
     """
     # Frames: (T, H, W, 3) -> (T, 3, H, W) -> (1, T, 3, H, W)
-    frames_tensor = torch.from_numpy(frames_np).permute(0, 3, 1, 2).unsqueeze(0).float()
-    frames_tensor = frames_tensor / 255.0 * 2 - 1  # Normalize to [-1, 1]
+    frames_tensor = torch.from_numpy(frames_np).permute(0, 3, 1, 2).unsqueeze(0)
+    masks_tensor = torch.from_numpy(masks_np).unsqueeze(1).unsqueeze(0)
 
-    # Masks: (T, H, W) -> (T, 1, H, W) -> (1, T, 1, H, W)
-    masks_tensor = torch.from_numpy(masks_np).unsqueeze(1).unsqueeze(0).float()
+    if target_device is not None:
+        # Move to GPU in target dtype, skipping float32 intermediate
+        frames_tensor = frames_tensor.to(device=target_device, dtype=target_dtype)
+        masks_tensor = masks_tensor.to(device=target_device, dtype=target_dtype)
+    else:
+        frames_tensor = frames_tensor.float()
+        masks_tensor = masks_tensor.float()
+
+    frames_tensor = frames_tensor / 255.0 * 2 - 1  # Normalize to [-1, 1]
     masks_tensor = masks_tensor / 255.0  # Normalize to [0, 1]
 
     return frames_tensor, masks_tensor
@@ -308,8 +316,10 @@ class E2FGVIHDCleaner:
         # Pre-compute padding once for the whole video
         h_pad = (60 - h % 60) % 60
         w_pad = (108 - w % 108) % 108
-        # Convert to tensors
-        imgs_all, masks_all = numpy_to_tensor(frames, masks)
+        # Determine target dtype for GPU tensors
+        target_dtype = torch.bfloat16 if self.use_bf16 else torch.float32
+        # Convert directly to GPU tensors, skipping float32 intermediate on CPU
+        imgs_all, masks_all = numpy_to_tensor(frames, masks, target_device=device, target_dtype=target_dtype)
         # Prepare binary masks for compositing
         binary_masks = np.expand_dims(masks > 0, axis=-1).astype(
             np.uint8
@@ -318,8 +328,6 @@ class E2FGVIHDCleaner:
         logger.debug(
             f"Processing {video_length} frames in {num_chunks} chunks (chunk_size={chunk_size}, overlap={overlap_size})"
         )
-        # Determine target dtype for GPU tensors
-        target_dtype = torch.bfloat16 if self.use_bf16 else torch.float32
 
         for chunk_idx in tqdm(
             range(num_chunks), desc="  Chunk", position=1, leave=False
@@ -327,9 +335,9 @@ class E2FGVIHDCleaner:
             start_idx = chunk_idx * (chunk_size - overlap_size)
             end_idx = min(start_idx + chunk_size, video_length)
             actual_chunk_size = end_idx - start_idx
-            # Extract chunk data and move to GPU with correct dtype in one step
-            imgs_chunk = imgs_all[:, start_idx:end_idx, :, :, :].to(device, dtype=target_dtype)
-            masks_chunk = masks_all[:, start_idx:end_idx, :, :, :].to(device, dtype=target_dtype)
+            # Slice from already-GPU tensors (already correct dtype)
+            imgs_chunk = imgs_all[:, start_idx:end_idx, :, :, :]
+            masks_chunk = masks_all[:, start_idx:end_idx, :, :, :]
             frames_np_chunk = frames[start_idx:end_idx]
             binary_masks_chunk = binary_masks[start_idx:end_idx]
             # Process chunk
