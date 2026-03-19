@@ -11,3 +11,6 @@ f7661c6	37.43	28.47	12.3	keep	preload all frames once + direct GPU tensor conver
 a06a71d	36.05	41.06	22.0	baseline	PyTorch 2.9.1 baseline: reverted bad exps + detect frame reuse + batch=8; torch.compile 41s vs 78s no-compile
 276a381	23.57	39.53	22.0	keep	LAMA batch=4 inference (2x per-frame speedup) + detect_batch_size=16
 5d1bb0e	23.41	39.51	22.0	keep	Final confirmed: LAMA -38% vs baseline (23.4s), E2FGVI warm -32% (39.5s)
+# compile mode ablation (PyTorch 2.9.1, bf16, torch.compile):
+# default: cold=67s warm=41s; reduce-overhead: cold=287s warm=39s; fp32: cold=277s warm=65s
+# dynamic=True/max-autotune/fullgraph: failed (graph breaks in model)
