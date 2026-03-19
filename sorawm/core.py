@@ -270,29 +270,43 @@ class SoraWM:
             del detect_missed
 
         if self.cleaner_type == CleanerType.LAMA:
-            ## 1. Lama Cleaner Strategy — reuse frames collected during detection pass.
-            for idx, frame in enumerate(
-                tqdm(
-                    all_frames_bgr_detect,
-                    total=total_frames,
-                    desc="Remove watermarks",
-                    disable=quiet,
-                )
-            ):
+            ## 1. Lama Cleaner Strategy — batched inference, reuse frames from detection.
+            from sorawm.cleaner.lama_cleaner import LAMA_INFER_BATCH_SIZE
+            batch_size = LAMA_INFER_BATCH_SIZE
+            batch_frames_buf: list = []
+            batch_masks_buf: list = []
+
+            def flush_lama_batch():
+                if not batch_frames_buf:
+                    return
+                cleaned = self.cleaner.clean_batch(batch_frames_buf, batch_masks_buf)
+                for f in cleaned:
+                    process_out.stdin.write(f.tobytes())
+                batch_frames_buf.clear()
+                batch_masks_buf.clear()
+
+            for idx in tqdm(range(total_frames), desc="Remove watermarks", disable=quiet):
+                frame = all_frames_bgr_detect[idx]
                 bbox = frame_bboxes[idx]["bbox"]
                 if bbox is not None:
                     x1, y1, x2, y2 = bbox
                     mask = np.zeros((height, width), dtype=np.uint8)
                     mask[y1:y2, x1:x2] = 255
-                    cleaned_frame = self.cleaner.clean(frame, mask)
+                    batch_frames_buf.append(frame)
+                    batch_masks_buf.append(mask)
+                    if len(batch_frames_buf) >= batch_size:
+                        flush_lama_batch()
                 else:
-                    cleaned_frame = frame
-                process_out.stdin.write(cleaned_frame.tobytes())
+                    # No watermark: flush pending batch, then write passthrough directly
+                    flush_lama_batch()
+                    process_out.stdin.write(frame.tobytes())
 
                 # 50% - 95%
                 if progress_callback and idx % 10 == 0:
                     progress = 50 + int((idx / total_frames) * 45)
                     progress_callback(progress)
+
+            flush_lama_batch()  # Flush remaining frames
         elif self.cleaner_type == CleanerType.E2FGVI_HQ:
             ## 2. E2FGVI_HQ Cleaner Strategy with overlap blending.
             frame_counter = 0

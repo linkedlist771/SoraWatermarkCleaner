@@ -19,7 +19,7 @@ if __name__ == "__main__":
     output_video_path = Path("outputs/sora_watermark_removed")
 
     # 1. LAMA baseline
-    sora_wm = SoraWM(cleaner_type=CleanerType.LAMA, detect_batch_size=8)
+    sora_wm = SoraWM(cleaner_type=CleanerType.LAMA, detect_batch_size=16)
     with timer("LAMA"):
         sora_wm.run(input_video_path, Path(f"{output_video_path}_lama.mp4"))
 
@@ -27,7 +27,7 @@ if __name__ == "__main__":
     sora_wm = SoraWM(
         cleaner_type=CleanerType.E2FGVI_HQ,
         enable_torch_compile=True,
-        detect_batch_size=8,
+        detect_batch_size=16,
         use_bf16=True,
     )
     with timer("E2FGVI_HQ + torch.compile + batch + bf16"):
