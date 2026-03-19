@@ -120,7 +120,7 @@ class SoraWM:
         output_options = {
             "pix_fmt": "yuv420p",
             "vcodec": "libx264",
-            "preset": "slow",
+            "preset": "medium",
         }
 
         if input_video_loader.original_bitrate:
