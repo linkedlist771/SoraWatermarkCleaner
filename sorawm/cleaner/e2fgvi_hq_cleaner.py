@@ -25,7 +25,6 @@ from sorawm.utils.video_utils import merge_frames_with_overlap
 def get_ref_index(
     frame_idx: int, neighbor_ids: List[int], length: int, ref_length: int, num_ref: int
 ) -> List[int]:
-    # TODO: optimize the code later.
     """
     Compute reference frame indices to use for a given frame.
 
@@ -39,16 +38,17 @@ def get_ref_index(
     Returns:
         ref_index (List[int]): List of selected reference frame indices, spaced by `ref_length`, excluding any indices in `neighbor_ids`. When `num_ref` != -1, at most `num_ref` indices are returned and they are chosen from a window centered on `frame_idx`.
     """
+    neighbor_set = set(neighbor_ids)
     ref_index = []
     if num_ref == -1:
         for i in range(0, length, ref_length):
-            if i not in neighbor_ids:
+            if i not in neighbor_set:
                 ref_index.append(i)
     else:
         start_idx = max(0, frame_idx - ref_length * (num_ref // 2))
         end_idx = min(length, frame_idx + ref_length * (num_ref // 2))
         for i in range(start_idx, end_idx + 1, ref_length):
-            if i not in neighbor_ids:
+            if i not in neighbor_set:
                 if len(ref_index) > num_ref:
                     break
                 ref_index.append(i)
@@ -213,6 +213,8 @@ class E2FGVIHDCleaner:
         frames_np_chunk: np.ndarray,
         h: int,
         w: int,
+        h_pad: int,
+        w_pad: int,
     ) -> List[np.ndarray]:
         """
         Compose and return cleaned frames for a chunk by inpainting masked regions using neighboring and reference frames.
@@ -226,6 +228,8 @@ class E2FGVIHDCleaner:
             frames_np_chunk (np.ndarray): Original frames as uint8 numpy arrays with shape (chunk_length, H, W, 3).
             h (int): Frame height.
             w (int): Frame width.
+            h_pad (int): Pre-computed height padding to align to mod 60.
+            w_pad (int): Pre-computed width padding to align to mod 108.
 
         Returns:
             List[np.ndarray]: List of length `chunk_length` containing the composited uint8 frames (H x W x 3) for processed indices; entries may be `None` for frames that were not covered/updated.
@@ -255,23 +259,12 @@ class E2FGVIHDCleaner:
             selected_imgs = imgs_chunk[:1, neighbor_ids + ref_ids, :, :, :]
             selected_masks = masks_chunk[:1, neighbor_ids + ref_ids, :, :, :]
 
-            # Convert inputs to bf16 if model is in bf16 mode
-            if self.use_bf16:
-                selected_imgs = selected_imgs.to(dtype=torch.bfloat16)
-                selected_masks = selected_masks.to(dtype=torch.bfloat16)
-
             with torch.no_grad():
                 masked_imgs = selected_imgs * (1 - selected_masks)
-                mod_size_h = 60
-                mod_size_w = 108
-                h_pad = (mod_size_h - h % mod_size_h) % mod_size_h
-                w_pad = (mod_size_w - w % mod_size_w) % mod_size_w
-                masked_imgs = torch.cat([masked_imgs, torch.flip(masked_imgs, [3])], 3)[
-                    :, :, :, : h + h_pad, :
-                ]
-                masked_imgs = torch.cat([masked_imgs, torch.flip(masked_imgs, [4])], 4)[
-                    :, :, :, :, : w + w_pad
-                ]
+                if h_pad > 0 or w_pad > 0:
+                    masked_imgs = torch.nn.functional.pad(
+                        masked_imgs, (0, w_pad, 0, h_pad), mode="reflect"
+                    )
                 pred_imgs, _ = self.model(masked_imgs, len(neighbor_ids))
                 pred_imgs = pred_imgs[:, :, :h, :w]
                 pred_imgs = (pred_imgs + 1) / 2
@@ -311,6 +304,9 @@ class E2FGVIHDCleaner:
         overlap_size = int(self.config.overlap_ratio * video_length)
         num_chunks = int(np.ceil(video_length / (chunk_size - overlap_size)))
         h, w = frames[0].shape[:2]
+        # Pre-compute padding once for the whole video
+        h_pad = (60 - h % 60) % 60
+        w_pad = (108 - w % 108) % 108
         # Convert to tensors
         imgs_all, masks_all = numpy_to_tensor(frames, masks)
         # Prepare binary masks for compositing
@@ -321,6 +317,8 @@ class E2FGVIHDCleaner:
         logger.debug(
             f"Processing {video_length} frames in {num_chunks} chunks (chunk_size={chunk_size}, overlap={overlap_size})"
         )
+        # Determine target dtype for GPU tensors
+        target_dtype = torch.bfloat16 if self.use_bf16 else torch.float32
 
         for chunk_idx in tqdm(
             range(num_chunks), desc="  Chunk", position=1, leave=False
@@ -328,10 +326,9 @@ class E2FGVIHDCleaner:
             start_idx = chunk_idx * (chunk_size - overlap_size)
             end_idx = min(start_idx + chunk_size, video_length)
             actual_chunk_size = end_idx - start_idx
-            # logger.debug(f'\nProcessing chunk {chunk_idx + 1}/{num_chunks}: frames {start_idx}-{end_idx}')
-            # Extract chunk data
-            imgs_chunk = imgs_all[:, start_idx:end_idx, :, :, :].to(device)
-            masks_chunk = masks_all[:, start_idx:end_idx, :, :, :].to(device)
+            # Extract chunk data and move to GPU with correct dtype in one step
+            imgs_chunk = imgs_all[:, start_idx:end_idx, :, :, :].to(device, dtype=target_dtype)
+            masks_chunk = masks_all[:, start_idx:end_idx, :, :, :].to(device, dtype=target_dtype)
             frames_np_chunk = frames[start_idx:end_idx]
             binary_masks_chunk = binary_masks[start_idx:end_idx]
             # Process chunk
@@ -344,6 +341,8 @@ class E2FGVIHDCleaner:
                 frames_np_chunk,
                 h,
                 w,
+                h_pad,
+                w_pad,
             )
             # Merge results with blending in overlap region
             comp_frames = merge_frames_with_overlap(
