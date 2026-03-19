@@ -3,6 +3,7 @@ from typing import List
 
 import numpy as np
 import torch
+import torch.cuda.nvtx as nvtx
 from loguru import logger
 from pydantic import BaseModel
 from tqdm import tqdm
@@ -97,7 +98,7 @@ if device.type == "mps":
 class E2FGVIHDConfig(BaseModel):
     ref_length: int = 10
     num_ref: int = -1
-    neighbor_stride: int = 5
+    neighbor_stride: int = 10
     chunk_size_ratio: float = 0.2  # TODO: this can be adjust as the VRAM
     overlap_ratio: int = 0.05
     enable_torch_compile: bool = ENABLE_E2FGVI_HQ_TORCH_COMPILE
@@ -268,19 +269,25 @@ class E2FGVIHDCleaner:
             selected_masks = masks_chunk[:1, neighbor_ids + ref_ids, :, :, :]
 
             with torch.no_grad():
+                nvtx.range_push("prepare_input")
                 masked_imgs = selected_imgs * (1 - selected_masks)
                 if h_pad > 0 or w_pad > 0:
                     # pad last 3 dims: (C_left, C_right, W_left, W_right, H_left, H_right)
                     masked_imgs = torch.nn.functional.pad(
                         masked_imgs, (0, w_pad, 0, h_pad, 0, 0), mode="reflect"
                     )
+                nvtx.range_pop()  # prepare_input
+                nvtx.range_push("model_forward")
                 pred_imgs, _ = self.model(masked_imgs, len(neighbor_ids))
+                nvtx.range_pop()  # model_forward
+                nvtx.range_push("postprocess")
                 pred_imgs = pred_imgs[:, :, :h, :w]
                 pred_imgs = (pred_imgs + 1) / 2
                 # Convert BFloat16 to Float32 before numpy conversion (numpy doesn't support BFloat16)
                 if pred_imgs.dtype == torch.bfloat16:
                     pred_imgs = pred_imgs.float()
                 pred_imgs = pred_imgs.cpu().permute(0, 2, 3, 1).numpy() * 255
+                nvtx.range_pop()  # postprocess
 
                 for i in range(len(neighbor_ids)):
                     idx = neighbor_ids[i]
