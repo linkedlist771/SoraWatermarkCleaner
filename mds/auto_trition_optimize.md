@@ -1,6 +1,6 @@
 # Auto Triton Optimize
 
-This is a task to have the agent find the bottleneck during the `E2FGVIHDCleaner`'s inference.
+This is a task to have the agent find the bottleneck during the `E2FGVIHDCleaner`'s inference, then write Triton ops to reduce latency.
 
 ## Setup
 
@@ -47,26 +47,28 @@ Each experiment runs on a single GPU. You can modify every script under the `pro
 
 What you need to do:
 
-1. Use nsys to profile and identify the bottleneck.
+1. Use nsys to profile and identify the latency bottleneck.
 2. Read the exported CSV files (`cat profiling/*_nvtx_sum.csv` and `cat profiling/*_cuda_kern_sum.csv`) to locate the slowest stages and kernels.
 3. Write Triton ops or apply other optimization strategies to address the bottleneck.
-4. Re-profile to measure the improvement.
-5. Record the results.
-6. Each experiment should not exceed 2 minutes.
+4. **Validate correctness**: after each optimization, compute the error diff between the optimized output and the baseline output (e.g. mean absolute error or max pixel diff on a representative frame). The diff must remain reasonable — if it blows up, the optimization is invalid.
+5. Re-profile to measure the latency improvement.
+6. Record the results.
+7. Each experiment should not exceed 2 minutes.
 
 **What you CAN do:**
 
 - Modify any file under the `profile` directory — profiling scripts, runner scripts, and any Triton kernel code you add.
 - Add new Triton kernels or optimization wrappers targeting identified bottlenecks.
 - Adjust NVTX annotations, profiling granularity, and nsys trace flags.
+- Focus heavily on writing Triton ops — fused kernels, custom attention, fused normalization, fused activation, etc.
 
 **What you CANNOT do:**
 
 - Modify the core model architecture outside of the `profile` directory (the upstream `E2FGVIHDCleaner` and `InpaintGenerator` source files are read-only for correctness).
 - Install new packages or add dependencies beyond what's already available.
-- Change the evaluation or correctness criteria — the cleaned output must remain visually equivalent.
+- Change the evaluation or correctness criteria — the cleaned output must remain visually equivalent (error diff must stay reasonable).
 
-**The goal is simple: identify the inference bottleneck and reduce it.** Use nsys profiling to pinpoint the slowest stages, then write Triton kernels or apply other GPU optimization strategies (operator fusion, memory layout changes, kernel tuning, etc.) to speed them up.
+**The goal is simple: identify the inference latency bottleneck and reduce it via Triton ops.** Use nsys profiling to pinpoint the slowest stages, then write Triton kernels or apply other GPU optimization strategies (operator fusion, memory layout changes, kernel tuning, etc.) to speed them up. Triton ops are the primary tool — prefer writing custom Triton kernels over other approaches.
 
 **The first run**: Your very first run should always be to establish the baseline profile, so you will run the profiling script as-is.
 
@@ -91,26 +93,26 @@ The typical workflow is: start with `nvtx_sum` to find the slowest stage, then d
 
 When an experiment is done, log it to `results.tsv` (tab-separated, NOT comma-separated — commas break in descriptions).
 
-The TSV has a header row and 5 columns:
+The TSV has a header row and 4 columns:
 
 ```
-commit	inference_ms	memory_gb	status	description
+commit	inference_ms	status	description
 ```
 
 1. git commit hash (short, 7 chars)
 2. total inference time in ms (e.g. 4523.1) — use 0.0 for crashes
-3. peak memory in GB, rounded to .1f (e.g. 8.0 — divide peak_vram_mb by 1024) — use 0.0 for crashes
-4. status: `keep`, `discard`, or `crash`
-5. short text description of what this experiment tried
+3. status: `keep`, `discard`, or `crash`
+4. short text description of what this experiment tried
 
 Example:
 
 ```
-commit	inference_ms	memory_gb	status	description
-a1b2c3d	4523.1	8.0	keep	baseline profiling
-b2c3d4e	3891.2	8.1	keep	fuse softmax+dropout in transformer via Triton
-c3d4e5f	4600.0	8.0	discard	custom Triton conv kernel (slower than cuDNN)
-d4e5f6g	0.0	0.0	crash	broken Triton grid config
+commit	inference_ms	status	description
+a1b2c3d	4523.1	keep	baseline profiling
+b2c3d4e	3891.2	keep	fused softmax+dropout in transformer via Triton
+c3d4e5f	4600.0	discard	custom Triton conv kernel (slower than cuDNN)
+d4e5f6g	0.0	crash	broken Triton grid config
+e5f6g7h	3750.0	keep	fused gelu+bias via Triton (error diff < 1e-5)
 ```
 
 ## The experiment loop
@@ -124,13 +126,14 @@ LOOP FOREVER:
    - `cat profiling/*_nvtx_sum.csv` — which stage is slowest?
    - `cat profiling/*_cuda_kern_sum.csv` — which GPU kernel dominates?
    - `cat profiling/*_cuda_api_sum.csv` — any host-side overhead (e.g. excessive cudaMemcpy)?
-3. Write a Triton kernel or apply an optimization targeting that bottleneck.
-4. git commit.
-5. Run the experiment: `bash profile/profile_whole_infer.sh > run.log 2>&1` (redirect everything — do NOT use tee or let output flood your context).
-6. Read out the results: `cat profiling/*_nvtx_sum.csv` to check if the targeted stage improved. If the CSV files are missing or empty, the run crashed — run `tail -n 50 run.log` to read the stack trace and attempt a fix.
+3. Write a Triton kernel or apply an optimization targeting that bottleneck. **Prefer Triton ops** — the primary goal is to replace slow PyTorch/cuDNN ops with hand-written Triton kernels.
+4. **Validate error diff**: run a quick check to ensure the optimized output is numerically close to baseline (e.g. mean absolute error on output frames). If the diff is unreasonable, fix or discard.
+5. git commit.
+6. Run the experiment: `bash profile/profile_whole_infer.sh > run.log 2>&1` (redirect everything — do NOT use tee or let output flood your context).
+7. Read out the results: `cat profiling/*_nvtx_sum.csv` to check if the targeted stage improved. If the CSV files are missing or empty, the run crashed — run `tail -n 50 run.log` to read the stack trace and attempt a fix.
 8. Record the results in the TSV (NOTE: do not commit the results.tsv file, leave it untracked by git).
-9. If inference time improved (lower), you "advance" the branch, keeping the git commit.
-10. If inference time is equal or worse, you git reset back to where you started.
+9. If inference time improved (lower) and error diff is reasonable, you "advance" the branch, keeping the git commit.
+10. If inference time is equal or worse, or error diff is too large, you git reset back to where you started.
 
 The idea is that you are a completely autonomous researcher trying things out. If they work, keep. If they don't, discard. And you're advancing the branch so that you can iterate. If you feel like you're getting stuck in some way, you can rewind but you should probably do this very sparingly (if ever).
 
@@ -138,6 +141,8 @@ The idea is that you are a completely autonomous researcher trying things out. I
 
 **Crashes**: If a run crashes (OOM, or a bug, or etc.), use your judgment: If it's something dumb and easy to fix (e.g. a typo, a missing import), fix it and re-run. If the idea itself is fundamentally broken, just skip it, log "crash" as the status in the TSV, and move on.
 
-**NEVER STOP**: Once the experiment loop has begun (after the initial setup), do NOT pause to ask the human if you should continue. Do NOT ask "should I keep going?" or "is this a good stopping point?". The human might be asleep or away from a computer and expects you to continue working *indefinitely* until you are manually stopped. You are autonomous. If you run out of ideas, think harder — re-read the nsys traces for new angles, try combining previous near-misses, try more aggressive fusion strategies, explore memory layout optimizations. The loop runs until the human interrupts you, period.
+**Error diff**: After each optimization, verify the output hasn't diverged. A small numerical diff (e.g. max abs error < 1e-3 for float32 outputs) is expected and acceptable. If the error is large, the optimization is invalid — discard it.
+
+**NEVER STOP**: Once the experiment loop has begun (after the initial setup), do NOT pause to ask the human if you should continue. Do NOT ask "should I keep going?" or "is this a good stopping point?". The human might be asleep or away from a computer and expects you to continue working *indefinitely* until you are manually stopped. You are autonomous. If you run out of ideas, think harder — re-read the nsys traces for new angles, try combining previous near-misses, try more aggressive fusion strategies, explore memory layout optimizations, write more Triton kernels. The loop runs until the human interrupts you, period.
 
 As an example use case, a user might leave you running while they sleep. If each experiment takes you ~2 minutes then you can run approx 30/hour, for a total of about 240 over the duration of the average human sleep. The user then wakes up to experimental results, all completed by you while they slept!
